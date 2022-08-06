@@ -12,7 +12,7 @@ default:
 install:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
 clean:
-	@rm -f *.o .*.cmd .*.flags *.mod.c *.order
+	@rm -f *.o .*.cmd .*.flags *.mod.c *.order *.ko *.mod
 	@rm -f .*.*.cmd *.symvers *~ *.*~ TODO.*
 	@rm -fR .tmp*
 	@rm -rf .tmp_versions
