@@ -1,0 +1,15 @@
+.Module.symvers.cmd
+.gitignore.swp
+.infotecs.ko.cmd
+.infotecs.mod.cmd
+.infotecs.mod.o.cmd
+.infotecs.o.cmd
+.modules.order.cmd
+Module.symvers
+infotecs.ko
+infotecs.mod
+infotecs.mod.c
+infotecs.mod.o
+infotecs.o
+modules.order
+
