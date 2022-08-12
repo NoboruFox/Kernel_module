@@ -3,19 +3,20 @@
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/file.h>
+#include <linux/delay.h>
+#include <linux/kthread.h>
+
+
+DEFINE_SPINLOCK(sw_spinlock);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alisa V <werewolf.luner@gmail.com>" );
 
-#define PATH_LENGTH 256
-
-//struct kobject binds sysfs and the kernel. Represents a kernel object (device etc)
-static struct kobject *kobj;
-char fname[PATH_LENGTH] = {0};
-char *path = NULL;
 char *hello_string = "Hello from kernel module\n";
+char *path = NULL;
+int timer = 5;
+static struct task_struct *thr;
 
-#if 1 
 int notify_param(const char *val, const struct kernel_param *kp)
 {
 	int res = 0;
@@ -23,9 +24,9 @@ int notify_param(const char *val, const struct kernel_param *kp)
 	if (!val) {
 		return -EINVAL;
 	}
-	
-	if (strlen(val) > PATH_LENGTH) {
-		printk(KERN_INFO "Path length is too long\n");
+	printk(KERN_INFO "New path for writing is %s", val);	
+	if (strlen(val) > PATH_MAX) {
+		printk(KERN_INFO "Path length is too long (only %d is supported)\n", PATH_MAX);
 		return -EINVAL;
 	}
 		
@@ -38,97 +39,102 @@ int notify_param(const char *val, const struct kernel_param *kp)
         return -1;
 }
 
-const struct kernel_param_ops my_param_ops =
+int notify_param_timer(const char *val, const struct kernel_param *kp)
+{
+	int res = 0;
+	int sec = 0;
+	if (!val) {
+		return -EINVAL;
+	}
+	sec = atoi(val);
+	printk(KERN_INFO "New timer for writing is %d", sec);	
+//	if (strlen(val) > PATH_MAX) {
+//		printk(KERN_INFO "Path length is too long (only %d is supported)\n", PATH_MAX);
+//		return -EINVAL;
+//	}
+		
+        res = param_set_int(sec, kp); // Use helper for write variable
+        if(res==0) {
+                printk(KERN_INFO "Call back function called...\n");
+                printk(KERN_INFO "New value of timer = %d\n", timer);
+                return 0;
+        }
+        return -1;
+}
+const struct kernel_param_ops path_ops =
 {
         .set = notify_param, // Use our setter ...
         .get = param_get_charp, // .. and standard getter
 };
 
-module_param_cb(path, &my_param_ops, &path, S_IRUGO|S_IWUSR);
-
-#else
-module_param(path, charp, S_IRUGO|S_IWUSR);
-
-#endif
-
-//callback from struct kobj_attribute. When read
-static ssize_t filename_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+const struct kernel_param_ops timer_ops =
 {
-	ssize_t count = 0;
-	count = sprintf(buf, "%s\n", fname); //from fname to buf
-	if (path)
-		count += sprintf(buf + count, "%s\n", path); //from fname to buf
+        .set = notify_param_timer, // Use our setter ...
+        .get = param_get_int, // .. and standard getter
+};
+module_param_cb(path, &path_ops, &path, S_IRUGO|S_IWUSR);
+module_param_cb(timer, &timer_ops, &timer, S_IRUGO|S_IWUSR);
 
-	return count;
-}
+static int writing_thread_func(void *arg) {
 
-//when write
-static ssize_t filename_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
-{
-	if (count > sizeof(fname)) {
-		return -ENOMEM;
-	}
-
-	sscanf(buf, "%s\n", fname); //reading from buf to fname
-	return count;
+	struct file *f;
+	loff_t pos = 0;
 	
-//	return snprintf(fname, sizeof(fname), "%s", buf);
+	allow_signal(SIGKILL); //this macro will allow to stop thread from userspace or kernelspace
+
+	printk(KERN_INFO "I am thread: %s[PID = %d]\n", current->comm, current->pid);
+
+	while(!kthread_should_stop()) {
+		spin_lock(&sw_spinlock);
+		printk("Writing thread executing on system CPU:%d \n",get_cpu());
+
+		f = filp_open(path, O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
+		
+		if (IS_ERR(f)){
+			printk(KERN_INFO "create file error\n");
+			return -1;
+		}
+		
+		if (f){
+			printk(KERN_INFO "Filp done\n");
+		}
+
+		kernel_write(f, hello_string, strlen(hello_string), &pos);
+		
+		filp_close(f, NULL);
+
+		spin_unlock(&sw_spinlock);
+		ssleep(timer);
+		if (signal_pending(thr)) //if signal_pending function captures SIGKILL signal, then thread will exit
+		    break;
+	}
+//thr = NULL;
+//do_exit(0); //we use kthread_should_stop check, so no need in this
+
+return 0;
 }
-
-#if 1
-
-//creating an attribute using __ATTR macro (for file creation)
-static struct kobj_attribute filename_attribute = __ATTR(filename, S_IWUSR | S_IRUGO, filename_show, filename_store);
-
-#else
-static struct device_attribute filename = {
-	.attr = {
-		.name = "filename",
-		.mode = S_IWUSR | S_IRUGO,	
-	},
-	.show = filename_show,			
-	.store = filename_store,		
-};
-struct kobj_attribute {
- struct attribute attr;		//the file to be created
- ssize_t (*show)(struct kobject *kobj, struct kobj_attribute *attr, char *buf);		// the pointer to the function (callback) that will be called when the file is read in sysfs
- ssize_t (*store)(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count);	//the pointer to the function (callback) which will be called when the file is written in sysfs
-};
-#endif
 
 static int __init infotecs_init( void )
 {
-	struct file *f;
-	loff_t pos = 0;
 	int error = 0;
 	printk(KERN_INFO "Infotecs module is loaded\n");
-	printk(KERN_INFO "path = %s\n", path);
+	printk(KERN_INFO "path = %s, timer = %d\n", path, timer);
 
-//creating directory "infotecs" in sysfs (/sys/kernel/ - provided by "kernel_kobj" parameter) 
-	kobj = kobject_create_and_add("infotecs", kernel_kobj);
-	if(!kobj)
-		return -ENOMEM; //If the kobject was not able to be created, NULL will be returned.??
+	if (!path)
+		return 0;
 
-//creating a file in that directory for r/w, size of a file is 4096 bytes (page_size)
-	error = sysfs_create_file(kobj, &filename_attribute.attr);
-	if (error) {
-		printk("Error while creating file %s (%d)\n", filename_attribute.attr.name, error);
+//	thr = kthread_run(writing_thread_func, NULL, "string_writer");
+	thr = kthread_create(writing_thread_func, NULL, "string_writer"); //using create&wake_up will save thr and allow kthread_stop if sigkill occured
+	if (IS_ERR(thr)) {
+		printk(KERN_INFO "ERROR: Cannot create thread\n");
+		error = PTR_ERR(thr);
+//	thr = NULL;
+		return error;
 	}
+	get_task_struct(thr);
+	wake_up_process(thr);
 
-//	return error;
-	
-	f = filp_open(path, O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
-	if (IS_ERR(f)){
-        printk(KERN_INFO "create file error\n");
-        return -1;
-	}
-	if (f){
-		printk(KERN_INFO "Filp done\n");
-	}
-
-	kernel_write(f, hello_string, strlen(hello_string), &pos);
-	
-	filp_close(f, NULL);
+	printk("Thread running\n");
 
 	return 0;
 }
@@ -136,9 +142,13 @@ static int __init infotecs_init( void )
 
 static void __exit infotecs_exit( void )
 {
-	printk( "Goodbye, world!" );
-	kobject_put(kobj);
+	if(thr) {
+		kthread_stop(thr); //sets kthread_should_stop to true. Fails if sigkill occured (thr is not valid because already exited)
+		printk(KERN_INFO "String_writer thread stopped\n");
+		put_task_struct(thr);
+	}
+	printk(KERN_INFO "Goodbye, world!\n" );
 }
 
-module_init( infotecs_init );
-module_exit( infotecs_exit ); 
+module_init(infotecs_init);
+module_exit(infotecs_exit); 
