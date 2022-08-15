@@ -12,14 +12,14 @@ DEFINE_SPINLOCK(sw_spinlock);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alisa V <werewolf.luner@gmail.com>" );
 
-char *hello_string = "Hello from kernel module\n";
+char *hello_string = "Hello from kernel module\n"; //string to be written in file <path>
 char *path = NULL;
-char *timer = NULL;
-int sec = 0;
+char *timer = NULL;		//writing thread will be sleeping for timer value before writing next line
+int sec = 0;			//ssleep takes int value
 
 static struct task_struct *thr; //thread
 
-int notify_param_path(const char *val, const struct kernel_param *kp)
+int notify_param_path(const char *val, const struct kernel_param *kp) //callback function for setting path to module (/sys/module/<modulename>/parameters)
 {
 	int res = 0;
 
@@ -83,12 +83,19 @@ static int writing_thread_func(void *arg) {
 
 	struct file *f;
 	loff_t pos = 0; //offset for writing in the file
+	int i = 0;
 	allow_signal(SIGKILL); //this macro will allow to stop thread from userspace or kernelspace
 
 	printk(KERN_INFO "I am thread: %s[PID = %d]\n", current->comm, current->pid);
 
 	while(!kthread_should_stop()) {
 		
+		if (!path || !timer) {
+			printk(KERN_INFO "No path and/or timer value provided, waiting for them both while sleeping...\n");
+			ssleep(5);
+			continue;
+		}
+
 		printk("Writing thread executing on system CPU:%d \n",get_cpu());
 		
 		spin_lock(&sw_spinlock); //protect path and timer from changing while writing is in progress
@@ -107,7 +114,13 @@ static int writing_thread_func(void *arg) {
 		
 		filp_close(f, NULL);
 
-		ssleep(sec);
+		
+		for (i = 0; i <= sec; i++) {		//if stop occured while thread sleeping, it should stop instead of waiting until it wakes because timer could be set for long like 1 min
+			if (kthread_should_stop())
+				break;
+			ssleep(1);
+		}
+		
 		spin_unlock(&sw_spinlock);
 
 		if (signal_pending(thr)) //if signal_pending function captures SIGKILL signal, then thread will exit
@@ -123,10 +136,10 @@ static int __init infotecs_init( void )
 {
 //	int error = 0;
 	printk(KERN_INFO "Infotecs module is loaded\n");
-	printk(KERN_INFO "path = %s, timer = %d\n", path, sec);
+	printk(KERN_INFO "path = %s, timer = %s\n", path, timer);
 
-	if (!path)
-		return 0;
+//	if (!path)		//should check it in threadfn func for waiting for params if their are not set in insmod
+//		return 0;
 //	thr = kthread_run(writing_thread_func, NULL, "string_writer");
 	thr = kthread_create(writing_thread_func, NULL, "string_writer"); //using create&wake_up will save thr and allow kthread_stop if sigkill occured
 	if (IS_ERR(thr)) {

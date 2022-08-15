@@ -1,1 +1,0 @@
-# simple linux device driver

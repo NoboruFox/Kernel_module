@@ -5,7 +5,7 @@
 
 void usage(char *name)
 {
-	printf("Usage:\n\t%s <-f (filename)>  <-t (timer value)>\n", name);
+	printf("Usage:\n\t%s sudo -f <filename> -t <timer value>\n", name);
 }
 
 int main(int argc, char *argv[]) 
