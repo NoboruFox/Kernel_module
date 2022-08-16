@@ -11,8 +11,7 @@ MODULE_AUTHOR("Alisa V <werewolf.luner@gmail.com>" );
 
 char *hello_string = "Hello from kernel module\n";
 char *path = NULL;
-char *timer = NULL;		
-int sec = 0;
+static unsigned int timer = 0;		
 
 static struct task_struct *thr;
 
@@ -39,19 +38,13 @@ int notify_param_path(const char *val, const struct kernel_param *kp)
 int notify_param_timer(const char *val, const struct kernel_param *kp)
 {
 	int res = 0;
-	int ret = 0;
 
 	if (!val) {
 		return -EINVAL;
 	}
-	ret = kstrtoint(val, 10, &sec); 
-	if (ret != 0)
-		return ret;
-
-	res = param_set_int(val, kp); 
-	if(res==0) {
-		printk(KERN_INFO "Value of timer = %d\n", sec);
-		return 0;
+	res = param_set_uint(val, kp); 
+	if (res == 0) {
+		printk(KERN_INFO "Value of timer = %d\n", timer);
         }
         return res;
 }
@@ -64,7 +57,7 @@ const struct kernel_param_ops path_ops =
 const struct kernel_param_ops timer_ops =
 {
 	.set = notify_param_timer,
-	.get = param_get_int,
+	.get = param_get_uint,
 };
 
 module_param_cb(path, &path_ops, &path, S_IRUGO|S_IWUSR);
@@ -102,7 +95,7 @@ static int writing_thread_func(void *arg) {
 		
 		printk (KERN_INFO "Writing done\n");
 		
-		for (i = 0; i <= sec; i++) {	//if stop occured while thread sleeping, it should stop instead of waiting until it wakes
+		for (i = 0; i <= timer; i++) {	//if stop occured while thread sleeping, it should stop instead of waiting until it wakes
 			if (kthread_should_stop())
 				break;
 			ssleep(1);
@@ -120,7 +113,7 @@ static int writing_thread_func(void *arg) {
 static int __init infotecs_init( void )
 {
 	printk(KERN_INFO "Infotecs module is loaded\n");
-	printk(KERN_INFO "path = %s, timer = %s\n", path, timer);
+	printk(KERN_INFO "path = %s, timer = %u\n", path, timer);
 
 	thr = kthread_create(writing_thread_func, NULL, "string_writer"); 
 	if (IS_ERR(thr)) {
