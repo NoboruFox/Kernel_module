@@ -6,7 +6,7 @@ TARGET = infotecs
 
 obj-m := $(TARGET).o
 
-default:
+all:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 install:
@@ -20,7 +20,7 @@ unload:
 
 help:
 	@echo 'Targets: '
-	@echo 'make: building module for current kernel'
+	@echo 'all: building module for current kernel'
 	@echo 'install: installing and sigining module'
 	@echo 'load: insmod'
 	@echo 'unload: rmmod'
